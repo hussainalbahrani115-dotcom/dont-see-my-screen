@@ -6,7 +6,9 @@ import archive, { bfs } from '../server/game/stages/archive.js';
 import broadcast, { POOL, WORDS3, WORDS4, computeAnswer, isValidWord } from '../server/game/stages/broadcast.js';
 import * as engine from '../server/game/engine.js';
 import { mimic } from '../server/ai/local.js';
-import { solutionFor } from './helpers.js';
+import { solutionFor, stageId, pressureToggles } from './helpers.js';
+import pressure from '../server/game/stages/pressure.js';
+import chase from '../server/game/stages/chase.js';
 
 const fakeGame = { names: { explorer: 'أ', archivist: 'ب' }, ai: null, phrase: ['الموج', 'يعود'] };
 
@@ -80,14 +82,36 @@ function play(difficulty = 'normal') {
   return { game, ctx, tick: (ms) => (now += ms), get now() { return now; } };
 }
 
-test('full playthrough reaches the release ending with all fragments', () => {
-  const s = play();
-  for (let guard = 0; s.game.status === 'playing' && guard < 10; guard++) {
-    for (const step of solutionFor(s.game)) {
-      s.tick(2000);
-      engine.handleAction(s.game, step.role, step.type, step.payload, s.now, engine.newCtx());
+// Plays the current stage to completion. The boiler is solved by actually
+// simulating it with a simple valve controller, proving it is controllable.
+function solveCurrent(s) {
+  if (stageId(s.game) === 'pressure') {
+    const idx = s.game.stageIndex;
+    for (let i = 0; i < 2000 && s.game.stageIndex === idx && s.game.status === 'playing'; i++) {
+      s.tick(500);
+      for (const t of pressureToggles(s.game.stage)) engine.handleAction(s.game, t.role, t.type, t.payload, s.now, engine.newCtx());
+      engine.tick(s.game, s.now, engine.newCtx());
     }
+    return;
   }
+  for (const step of solutionFor(s.game)) {
+    s.tick(1500);
+    engine.handleAction(s.game, step.role, step.type, step.payload, s.now, engine.newCtx());
+  }
+}
+
+function advanceTo(s, id) {
+  for (let guard = 0; stageId(s.game) !== id && s.game.status === 'playing' && guard < 10; guard++) solveCurrent(s);
+}
+
+test('full playthrough of all six stages reaches the release ending', () => {
+  const s = play();
+  const seen = [];
+  for (let guard = 0; s.game.status === 'playing' && guard < 12; guard++) {
+    seen.push(stageId(s.game));
+    solveCurrent(s);
+  }
+  assert.deepEqual(seen, ['junction', 'archive', 'pressure', 'broadcast', 'chase', 'core']);
   assert.equal(s.game.status, 'ended');
   assert.equal(s.game.ending, 'release');
   assert.equal(s.game.result.fragments, 3);
@@ -104,7 +128,7 @@ test('wrong answers cost time; timer runs out to the timeout ending', () => {
   assert.equal(s.game.stats.mistakes, 1);
   assert.throws(() => engine.handleAction(s.game, 'explorer', 'cut', { index: wrong }, s.now, engine.newCtx()), /محترق/);
   assert.throws(() => engine.handleAction(s.game, 'archivist', 'cut', { index: 0 }, s.now, engine.newCtx()), /غير مسموح/);
-  s.tick(17 * 60_000);
+  s.tick(27 * 60_000);
   const ctx = engine.newCtx();
   engine.tick(s.game, s.now, ctx);
   assert.equal(s.game.ending, 'timeout');
@@ -147,7 +171,7 @@ test('echo fakes are delivered only to their target and can be flagged', () => {
 
 test('core: two disagreements hand the ending to the Echo', () => {
   const s = play();
-  while (s.game.stageIndex < 3) for (const step of solutionFor(s.game)) engine.handleAction(s.game, step.role, step.type, step.payload, s.now, engine.newCtx());
+  advanceTo(s, 'core');
   const vote = (r, c) => engine.handleAction(s.game, r, 'vote', { choice: c }, s.now, engine.newCtx());
   vote('explorer', 'release');
   const view = engine.gameView(s.game, 'archivist', s.now);
@@ -163,7 +187,7 @@ test('core: two disagreements hand the ending to the Echo', () => {
 
 test('core: shutdown code typed by the archivist (Arabic digits accepted)', () => {
   const s = play();
-  while (s.game.stageIndex < 3) for (const step of solutionFor(s.game)) engine.handleAction(s.game, step.role, step.type, step.payload, s.now, engine.newCtx());
+  advanceTo(s, 'core');
   engine.handleAction(s.game, 'explorer', 'vote', { choice: 'shutdown' }, s.now, engine.newCtx());
   engine.handleAction(s.game, 'archivist', 'vote', { choice: 'shutdown' }, s.now, engine.newCtx());
   assert.throws(() => engine.handleAction(s.game, 'explorer', 'speak', { text: 'x' }, s.now, engine.newCtx()));
@@ -183,4 +207,98 @@ test('hints unlock over time, max three per stage per role', () => {
   engine.requestHint(s.game, 'archivist', s.now);
   assert.throws(() => engine.requestHint(s.game, 'archivist', s.now), /استنفدت/);
   assert.equal(s.game.stats.hints, 3);
+});
+
+test('pressure: generated boilers are valid and neglect bursts a valve', () => {
+  for (let seed = 1; seed <= 200; seed++) {
+    for (const level of [0, 1, 2]) pressure.validate(pressure.generate({ rng: createRng(seed * 3 + level), level, game: fakeGame }));
+  }
+  const s = play();
+  advanceTo(s, 'pressure');
+  const st = s.game.stage;
+  const av = engine.gameView(s.game, 'archivist', s.now).stage;
+  const ev = engine.gameView(s.game, 'explorer', s.now).stage;
+  assert.ok('p' in av && !('p' in ev), 'only the archivist reads the gauge');
+  assert.ok(ev.valves.every((v) => !('flow' in v)), 'valve effects are never sent to the explorer');
+  const before = s.game.stats.mistakes;
+  for (let i = 0; i < 200 && st.bursts === 0; i++) {
+    s.tick(500);
+    engine.tick(s.game, s.now, engine.newCtx());
+  }
+  assert.equal(st.bursts, 1, 'drift alone eventually bursts');
+  assert.equal(s.game.stats.mistakes, before + 1);
+});
+
+test('chase: the Echo hunts along the walls and catching costs time', () => {
+  const s = play();
+  advanceTo(s, 'chase');
+  const st = s.game.stage;
+  assert.equal(s.game.deal, 'offered');
+  const ev = engine.gameView(s.game, 'explorer', s.now).stage;
+  assert.ok(!('echo' in ev) && !('fuses' in ev && Array.isArray(ev.fuses)), 'explorer never sees the map');
+  const av = engine.gameView(s.game, 'archivist', s.now).stage;
+  assert.equal(av.pos, st.pos);
+  assert.equal(av.echo, st.echo);
+  st.accuracy = 1;
+  const deadline = s.game.deadline;
+  for (let i = 0; i < 200 && st.catches === 0; i++) {
+    s.tick(st.interval);
+    engine.tick(s.game, s.now, engine.newCtx());
+  }
+  assert.equal(st.catches, 1, 'a perfectly accurate Echo catches a still explorer');
+  assert.equal(st.pos, st.start);
+  assert.ok(s.game.deadline <= deadline - 25_000);
+  for (let seed = 1; seed <= 150; seed++) chase.validate(chase.generate({ rng: createRng(seed), level: seed % 3, game: fakeGame }));
+});
+
+test('hiding in a locker shakes the Echo off', () => {
+  const s = play();
+  advanceTo(s, 'chase');
+  const st = s.game.stage;
+  st.pos = st.lockers[0];
+  engine.handleAction(s.game, 'explorer', 'hide', {}, s.now, engine.newCtx());
+  st.accuracy = 1;
+  for (let i = 0; i < 60; i++) {
+    s.tick(st.interval);
+    engine.tick(s.game, s.now, engine.newCtx());
+  }
+  assert.equal(st.catches, 0);
+  assert.throws(() => engine.handleAction(s.game, 'explorer', 'hide', {}, s.now, engine.newCtx()) && (st.pos = st.start) && engine.handleAction(s.game, 'explorer', 'hide', {}, s.now, engine.newCtx()));
+});
+
+test("the Echo's deal: slower hunter now, betrayal revealed and scored later", () => {
+  const s = play();
+  advanceTo(s, 'chase');
+  assert.throws(() => engine.answerDeal(s.game, 'explorer', true, s.now, engine.newCtx()));
+  const archivistView = engine.gameView(s.game, 'archivist', s.now);
+  assert.equal(archivistView.deal, 'offered');
+  assert.equal(engine.gameView(s.game, 'explorer', s.now).deal, undefined, 'the explorer is not told');
+  engine.answerDeal(s.game, 'archivist', true, s.now, engine.newCtx());
+  assert.throws(() => engine.answerDeal(s.game, 'archivist', false, s.now, engine.newCtx()));
+  advanceTo(s, 'core');
+  assert.ok(s.game.stage.lines[0].includes('باعني صوته'), 'the core tells the explorer');
+  solveCurrent(s);
+  assert.equal(s.game.ending, 'release');
+  assert.ok(s.game.result.breakdown.some((b) => b.label === 'صفقة مع الصدى' && b.value === -250));
+  assert.ok(s.game.result.badges.some((b) => b.title === 'صوت للبيع'));
+});
+
+test('urgent ping reaches the partner with a cooldown', () => {
+  const s = play();
+  const ctx = engine.newCtx();
+  engine.ping(s.game, 'explorer', s.now, ctx);
+  assert.deepEqual(ctx.fx, [{ to: 'archivist', type: 'ping', data: {} }]);
+  assert.throws(() => engine.ping(s.game, 'explorer', s.now + 1000, engine.newCtx()), /انتظر/);
+  s.tick(7000);
+  engine.ping(s.game, 'explorer', s.now, engine.newCtx());
+});
+
+test('every stage has an interlude card or none, and badges are computed', () => {
+  const s = play();
+  for (let guard = 0; s.game.status === 'playing' && guard < 12; guard++) {
+    const v = engine.gameView(s.game, 'explorer', s.now);
+    if (v.stageId !== 'junction') assert.ok(v.interlude.lines.length >= 2, v.stageId);
+    solveCurrent(s);
+  }
+  assert.ok(Array.isArray(s.game.result.badges));
 });

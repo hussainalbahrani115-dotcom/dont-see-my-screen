@@ -12,7 +12,8 @@ const DISCONNECT_GRACE_MS = 4000;
 const LOBBY_SEAT_TIMEOUT_MS = 3 * 60_000;
 
 export class RoomService {
-  constructor({ store, provider, ttlMs, now = () => Date.now() }) {
+  constructor({ store, provider, ttlMs, devStartStage = '', now = () => Date.now() }) {
+    this.devStartStage = devStartStage;
     this.store = store;
     this.provider = provider;
     this.ttlMs = ttlMs;
@@ -222,6 +223,7 @@ export class RoomService {
     const names = Object.fromEntries(room.players.map((p) => [p.role, p.name]));
     const seed = crypto.randomInt(2 ** 31 - 1);
     room.game = engine.createGame({ seed, difficulty: room.difficulty, names, now, ctx });
+    if (this.devStartStage) engine.debugSkipTo(room.game, this.devStartStage, now, ctx);
     room.rematch = [];
     room.rounds++;
     const gameId = room.game.id;
@@ -278,6 +280,20 @@ export class RoomService {
       this.changed(room);
     }
     return { tier: hint.tier };
+  }
+
+  deal(room, playerId, accept) {
+    const { me, game } = this.gameFor(room, playerId);
+    const ctx = engine.newCtx();
+    engine.answerDeal(game, me.role, !!accept, this.now(), ctx);
+    this.changed(room, ctx);
+  }
+
+  ping(room, playerId) {
+    const { me, game } = this.gameFor(room, playerId);
+    const ctx = engine.newCtx();
+    engine.ping(game, me.role, this.now(), ctx);
+    this.changed(room, ctx);
   }
 
   rematch(room, playerId) {

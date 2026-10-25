@@ -14,4 +14,6 @@ export const config = {
   roomTtlMs: 6 * 60 * 60_000,
   // Socket events allowed per player per 10 seconds.
   rateLimit: 80,
+  // Developer-only: start every new game at this stage id (e.g. "chase").
+  devStartStage: process.env.DEV_START_STAGE || '',
 };

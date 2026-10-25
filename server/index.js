@@ -13,7 +13,8 @@ export function createGameServer(options = {}) {
   const cfg = { ...config, ...options };
   const store = openStore(cfg.dbFile);
   const provider = options.provider ?? createProvider(cfg);
-  const rooms = new RoomService({ store, provider, ttlMs: cfg.roomTtlMs });
+  const rooms = new RoomService({ store, provider, ttlMs: cfg.roomTtlMs, devStartStage: cfg.devStartStage });
+  if (cfg.devStartStage) console.warn(`DEV_START_STAGE=${cfg.devStartStage}: new games skip ahead (development only)`);
   const restored = rooms.load();
 
   const app = express();
@@ -36,7 +37,8 @@ export function createGameServer(options = {}) {
   const server = createServer(app);
   const io = new Server(server, { maxHttpBufferSize: 16_000, pingInterval: 10_000, pingTimeout: 8_000 });
   attachRealtime(io, rooms, { rateLimit: cfg.rateLimit });
-  const ticker = setInterval(() => rooms.tickAll(), 1000);
+  // Real-time stages (pressure, chase) advance on this clock.
+  const ticker = setInterval(() => rooms.tickAll(), 500);
 
   return {
     app,

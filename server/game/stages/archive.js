@@ -6,7 +6,7 @@
 
 import { DIR_NAMES } from '../text.js';
 
-const DELTA = { n: [-1, 0], s: [1, 0], e: [0, 1], w: [0, -1] };
+export const DELTA = { n: [-1, 0], s: [1, 0], e: [0, 1], w: [0, -1] };
 const OPP = { n: 's', s: 'n', e: 'w', w: 'e' };
 
 export const LANDMARKS = {
@@ -22,8 +22,8 @@ export const LANDMARKS = {
   radio: { map: 'جهاز الاستقبال', sense: 'راديو صغير على رف يهمس بتشويش متقطع.', short: 'عند راديو صغير يوشوش' },
 };
 
-const key = (r, c) => `${r},${c}`;
-const parse = (k) => k.split(',').map(Number);
+export const key = (r, c) => `${r},${c}`;
+export const parse = (k) => k.split(',').map(Number);
 
 function neighbors(walls, k) {
   const [r, c] = parse(k);
@@ -55,7 +55,7 @@ function carve(walls, r, c, d) {
   walls[r + dr][c + dc][OPP[d]] = false;
 }
 
-function makeMaze(rng, size) {
+export function makeMaze(rng, size, loops = size - 1) {
   const walls = Array.from({ length: size }, () => Array.from({ length: size }, () => ({ n: true, e: true, s: true, w: true })));
   const seen = new Set();
   const stack = [[rng.int(0, size - 1), rng.int(0, size - 1)]];
@@ -75,7 +75,6 @@ function makeMaze(rng, size) {
     stack.push(next);
   }
   // A few loops so there is more than one route around collapsed floors.
-  let loops = size - 1;
   for (let guard = 0; loops > 0 && guard < 200; guard++) {
     const r = rng.int(0, size - 1);
     const c = rng.int(0, size - 1);

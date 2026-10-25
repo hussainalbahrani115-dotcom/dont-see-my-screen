@@ -19,10 +19,12 @@ export const DIFFICULTIES = ['easy', 'normal', 'hard'];
 export const other = (role) => (role === 'explorer' ? 'archivist' : 'explorer');
 
 const LEVEL = { easy: 0, normal: 1, hard: 2 };
-const DURATION_MS = { easy: 30 * 60_000, normal: 22 * 60_000, hard: 16 * 60_000 };
+const DURATION_MS = { easy: 42 * 60_000, normal: 34 * 60_000, hard: 26 * 60_000 };
 const MULTIPLIER = { easy: 0.8, normal: 1, hard: 1.3 };
 // Echo impersonation attempts per stage, by base difficulty.
-const FAKES = { easy: [0, 1, 0, 1], normal: [1, 1, 1, 1], hard: [1, 2, 1, 1] };
+const FAKES = { easy: [0, 1, 0, 0, 1, 1], normal: [1, 1, 1, 1, 1, 1], hard: [1, 2, 1, 1, 2, 1] };
+const PING_COOLDOWN_MS = 6000;
+const DEAL_PENALTY = 250;
 const HINT_UNLOCK_MS = [0, 60_000, 150_000];
 const MAX_CHAT = 250;
 
@@ -51,7 +53,10 @@ export function createGame({ seed, difficulty, names, now, ctx = newCtx() }) {
     ending: null,
     result: null,
     names,
-    stats: { mistakes: 0, hints: 0, correctFlags: 0, wrongFlags: 0, penaltySec: 0 },
+    stats: { mistakes: 0, hints: 0, correctFlags: 0, wrongFlags: 0, penaltySec: 0, caught: 0 },
+    // «صفقة الصدى»: offered privately to the archivist during the chase.
+    deal: null,
+    lastPing: { explorer: 0, archivist: 0 },
     fragments: { f1: false, f2: false, f3: false },
     inventory: [],
     phrase: [rng.pick(story.PHRASE_A), rng.pick(story.PHRASE_B)],
@@ -116,6 +121,9 @@ function makeApi(game, now, ctx, role = null) {
       if (!game.inventory.some((i) => i.id === id)) game.inventory.push({ id, name, desc });
     },
     end: (ending) => endGame(game, ending, now, ctx),
+    stat(key, inc = 1) {
+      game.stats[key] = (game.stats[key] || 0) + inc;
+    },
   };
   return api;
 }
@@ -205,6 +213,12 @@ export function endGame(game, ending, now, ctx) {
   ctx.requests.push({ kind: 'epilogue' });
 }
 
+// Developer shortcut (DEV_START_STAGE env only): jump a fresh game to a stage.
+export function debugSkipTo(game, id, now, ctx) {
+  const index = STAGES.findIndex((s) => s.id === id);
+  if (index > 0) enterStage(game, index, now, ctx);
+}
+
 export function remainingMs(game, now) {
   if (game.status !== 'playing') return Math.max(0, game.deadline - (game.endedAt ?? now));
   return Math.max(0, game.deadline - (game.pausedAt ?? now));
@@ -226,6 +240,7 @@ export function computeResult(game, ending, now) {
     { label: 'خُدعتما بالصدى', value: -fooled * 75 },
     { label: 'الأخطاء', value: -s.mistakes * 40 },
     { label: 'التلميحات', value: -s.hints * 60 },
+    { label: 'صفقة مع الصدى', value: game.deal === 'accepted' ? -DEAL_PENALTY : 0 },
   ];
   const raw = breakdown.reduce((sum, b) => sum + b.value, 0);
   const score = Math.max(0, Math.round(raw * MULTIPLIER[game.difficulty]));
@@ -243,8 +258,28 @@ export function computeResult(game, ending, now) {
     fragments: frags,
     stages: game.stageLog,
     fakes: fakes.map((m) => ({ to: m.to, text: m.text, caught: m.flagResult === 'echo' })),
+    deal: game.deal,
+    badges: computeBadges(game, { won, fakes, fooled, frags, remainingSec }),
     epilogue: null,
   };
+}
+
+function computeBadges(game, { won, fakes, fooled, frags, remainingSec }) {
+  const s = game.stats;
+  const total = DURATION_MS[game.difficulty] / 1000;
+  const reachedChase = game.stageLog.some((x) => x.id === 'chase');
+  const list = [
+    won && s.mistakes === 0 && ['ok', '🎯', 'يد ثابتة', 'أنهيتما المهمة بلا أي خطأ'],
+    fakes.length > 0 && fooled === 0 && ['ok', '🦻', 'أذن لا تُخدع', 'كشفتما كل محاولات الصدى'],
+    s.wrongFlags >= 2 && ['dark', '🌀', 'الشك القاتل', 'اتهمتما بعضكما أكثر من مرة'],
+    frags === 3 && ['ok', '📜', 'حارسا الذاكرة', 'جمعتما كل أوراق سلمى'],
+    won && remainingSec / total > 0.4 && ['ok', '⚡', 'أسرع من الإشارة', 'بقي أكثر من 40% من الوقت'],
+    reachedChase && s.caught === 0 && ['ok', '👻', 'شبح الممرات', 'لم يمسك بكما الصدى في المطاردة'],
+    won && s.hints === 0 && ['ok', '🧠', 'بلا مساعدة', 'لم تطلبا أي تلميح'],
+    game.deal === 'accepted' && ['dark', '🤝', 'صوت للبيع', 'عقدتما صفقة مع الصدى'],
+    game.deal === 'declined' && ['ok', '🛡', 'لا للصفقة', 'رفضتما عرض الصدى'],
+  ];
+  return list.filter(Boolean).map(([tone, icon, title, desc]) => ({ tone, icon, title, desc }));
 }
 
 // ---------------------------------------------------------------- actions
@@ -298,6 +333,22 @@ export function flagMessage(game, role, id, now, ctx) {
   }
 }
 
+// The Echo's private bargain with the archivist (see stages/chase.js).
+export function answerDeal(game, role, accept, now, ctx) {
+  assertPlaying(game);
+  if (role !== 'archivist' || game.deal !== 'offered') throw new GameError('لا يوجد عرض بانتظار ردك');
+  game.deal = accept ? 'accepted' : 'declined';
+  pushLog(game, 'archivist', accept ? 'قبلت صفقة الصدى. لن يعرف شريكك… إلا إن أخبرته.' : 'رفضت صفقة الصدى. سمعت ضحكة قصيرة ثم صمت.', now);
+  ctx.fx.push({ to: 'archivist', type: accept ? 'echoLaugh' : 'echoCaught', data: {} });
+}
+
+export function ping(game, role, now, ctx) {
+  assertPlaying(game);
+  if (now - game.lastPing[role] < PING_COOLDOWN_MS) throw new GameError('انتظر قليلًا قبل النداء التالي');
+  game.lastPing[role] = now;
+  ctx.fx.push({ to: other(role), type: 'ping', data: {} });
+}
+
 export function requestHint(game, role, now) {
   assertPlaying(game);
   const mod = STAGES[game.stageIndex];
@@ -338,7 +389,7 @@ export function tick(game, now, ctx) {
     changed = true;
   }
   const mod = STAGES[game.stageIndex];
-  if (mod.tick) mod.tick(game.stage, makeApi(game, now, ctx));
+  if (mod.tick && mod.tick(game.stage, makeApi(game, now, ctx))) changed = true;
   return changed;
 }
 
@@ -394,6 +445,8 @@ export function gameView(game, role, now) {
     paused: !!game.pausedAt,
     names: game.names,
     intro: story.intro(role, game),
+    interlude: story.INTERLUDES[mod.id]?.(role, game) ?? null,
+    deal: role === 'archivist' ? game.deal : undefined,
     stage: playing ? mod[`${role}View`](game.stage, game) : null,
     logs: game.logs[role].slice(-60),
     docs: role === 'archivist' ? game.docs.map(({ isNew, ...d }) => d) : undefined,

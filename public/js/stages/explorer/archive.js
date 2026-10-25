@@ -11,7 +11,7 @@ const DIRS = [
 const DIR_NAME = { n: 'الشمال', s: 'الجنوب', e: 'الشرق', w: 'الغرب' };
 const ICON = { clock: '🕰', puddle: '💧', cabinet: '🗄', reels: '🎞', fan: '🌀', phone: '☎', portrait: '🖼', piano: '🎹', fuel: '⛽', radio: '📻' };
 
-function cellSvg(v) {
+export function cellSvg(v) {
   const wall = (d) => {
     const seg = { n: 'M60 60H340', s: 'M60 340H340', e: 'M340 60V340', w: 'M60 60V340' }[d];
     return v.open[d]
@@ -24,7 +24,7 @@ function cellSvg(v) {
     const grad = { n: 'gN', s: 'gS', e: 'gE', w: 'gW' }[d];
     return `<rect x="${r[0]}" y="${r[1]}" width="${r[2]}" height="${r[3]}" fill="url(#${grad})"/>`;
   };
-  const icon = v.landmark ? ICON[v.landmark.id] : v.atStart ? '🪜' : '';
+  const icon = v.icon ?? (v.landmark ? ICON[v.landmark.id] : v.atStart ? '🪜' : '');
   return svg(`<svg viewBox="0 0 400 400" aria-hidden="true">
     <defs>
       <radialGradient id="light" cx="50%" cy="50%" r="60%"><stop offset="0" stop-color="#3b2f1c"/><stop offset=".55" stop-color="#1a140c"/><stop offset="1" stop-color="#050403"/></radialGradient>

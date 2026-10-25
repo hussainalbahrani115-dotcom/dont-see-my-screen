@@ -43,6 +43,16 @@ export function ResultsScreen(app) {
           ),
         ),
       ),
+      r.badges?.length
+        ? h(
+            'section',
+            { class: 'badges' },
+            r.badges.map((b) => h('div', { class: `badge-card ${b.tone}`, style: { animationDelay: `${Math.random() * 0.4}s` } }, h('span', { class: 'bi' }, b.icon), h('b', {}, b.title), h('span', {}, b.desc))),
+          )
+        : null,
+      r.deal && r.deal !== 'offered'
+        ? h('p', { class: `deal-reveal ${r.deal}` }, r.deal === 'accepted' ? '🤝 كشف الأرشيف: المؤرشف قبل صفقة الصدى في ممر الهوائيات.' : '🛡 المؤرشف رفض صفقة الصدى في ممر الهوائيات.')
+        : null,
       h(
         'section',
         { class: 'reveal' },

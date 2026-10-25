@@ -7,6 +7,11 @@ import * as exJunction from '../stages/explorer/junction.js';
 import * as exArchive from '../stages/explorer/archive.js';
 import * as exBroadcast from '../stages/explorer/broadcast.js';
 import * as exCore from '../stages/explorer/core.js';
+import * as exPressure from '../stages/explorer/pressure.js';
+import * as exChase from '../stages/explorer/chase.js';
+import * as arPressure from '../stages/archivist/pressure.js';
+import * as arChase from '../stages/archivist/chase.js';
+import { ambience } from '../audio.js';
 import * as arJunction from '../stages/archivist/junction.js';
 import * as arArchive from '../stages/archivist/archive.js';
 import * as arBroadcast from '../stages/archivist/broadcast.js';
@@ -14,8 +19,8 @@ import * as arCore from '../stages/archivist/core.js';
 import { renderDocs } from '../stages/archivist/docs.js';
 
 const STAGES = {
-  explorer: { junction: exJunction, archive: exArchive, broadcast: exBroadcast, core: exCore },
-  archivist: { junction: arJunction, archive: arArchive, broadcast: arBroadcast, core: arCore },
+  explorer: { junction: exJunction, archive: exArchive, pressure: exPressure, broadcast: exBroadcast, chase: exChase, core: exCore },
+  archivist: { junction: arJunction, archive: arArchive, pressure: arPressure, broadcast: arBroadcast, chase: arChase, core: arCore },
 };
 const ROLE_LABEL = { explorer: 'الميداني', archivist: 'المؤرشف' };
 const QUICK = ['تمام ✔', 'أعد من فضلك', 'انتظر لحظة', 'صِف لي ما تراه', 'هل أرسلت الرسالة السابقة فعلًا؟'];
@@ -33,27 +38,38 @@ export function GameScreen(app) {
   let deskTab = 'stage';
   let docsSeen = Number(sessionStorage.getItem(`dsms:docs:${gameId}`) || 0);
   let lastDocs = null;
+  let lastLogs = null;
+  let interludeShown = null;
 
   // ---------------------------------------------------------- HUD
   const timerEl = h('div', { class: 'timer', role: 'timer', 'aria-label': 'الوقت المتبقي' }, '--:--');
   const pipsEl = h('nav', { class: 'stage-pips', 'aria-label': 'المراحل' });
   const soundBtn = h('button', { class: 'icon-btn', type: 'button', title: 'الصوت', 'aria-label': 'تشغيل/إيقاف الصوت' }, app.sfx.enabled ? '🔊' : '🔇');
-  soundBtn.addEventListener('click', () => (soundBtn.textContent = app.sfx.toggle() ? '🔊' : '🔇'));
+  soundBtn.addEventListener('click', () => {
+    soundBtn.textContent = app.sfx.toggle() ? '🔊' : '🔇';
+    ambience.start();
+  });
   const leaveBtn = h('button', { class: 'icon-btn', type: 'button', title: 'مغادرة', 'aria-label': 'مغادرة الغرفة' }, '⎋');
   leaveBtn.addEventListener('click', async () => (await ask('مغادرة الجولة؟ ستتوقف اللعبة حتى يعود أحد إلى مقعدك.', 'مغادرة')) && app.leave());
+  const pingBtn = h('button', { class: 'icon-btn ping-btn', type: 'button', title: 'نداء عاجل لشريكك', 'aria-label': 'نداء عاجل لشريكك' }, '📣');
+  pingBtn.addEventListener('click', async () => {
+    const res = await app.call('game:ping');
+    if (res.ok) toast('📣 أرسلت نداءً عاجلًا لشريكك', 'good');
+  });
   const hud = h(
     'header',
     { class: 'hud' },
     h('div', { class: 'role-chip' }, role === 'explorer' ? '🔦' : '🗂', h('span', { class: 'rn' }, ROLE_LABEL[role])),
     pipsEl,
-    h('div', { class: 'hud-right' }, timerEl, soundBtn, leaveBtn),
+    h('div', { class: 'hud-right' }, timerEl, pingBtn, soundBtn, leaveBtn),
   );
 
   // ---------------------------------------------------------- stage area
   const stageHost = h('div');
   const deskTabs = h('div', { class: 'desk-tabs', role: 'tablist' });
   const docsHost = h('div', { class: 'doc-list' });
-  const stageArea = h('main', { class: 'stage-area', id: 'stage' }, role === 'archivist' ? h('div', { class: 'ar-wrap' }, deskTabs, stageHost, docsHost) : stageHost);
+  const dealHost = h('div');
+  const stageArea = h('main', { class: 'stage-area', id: 'stage' }, role === 'archivist' ? h('div', { class: 'ar-wrap' }, dealHost, deskTabs, stageHost, docsHost) : stageHost);
 
   // ---------------------------------------------------------- side panel
   const chatList = h('div', { class: 'chat-list', role: 'log', 'aria-label': 'المحادثة' });
@@ -106,6 +122,8 @@ export function GameScreen(app) {
   const overlayHost = h('div');
   const el = h('div', { class: `game role-${role}` }, hud, h('div', { class: 'game-body' }, stageArea, side, mobileBtn), overlayHost);
   document.body.className = `role-${role}`;
+  // Browsers only allow audio after a gesture (also covers resumed sessions).
+  el.addEventListener('pointerdown', () => ambience.start(), { once: true });
 
   function setSideTab(k) {
     sideTab = k;
@@ -137,6 +155,9 @@ export function GameScreen(app) {
     timerEl.textContent = fmtClock(ms);
     timerEl.classList.toggle('low', !g.paused && ms < 120_000);
     timerEl.classList.toggle('paused', g.paused);
+    const progress = g.stageIndex / Math.max(1, g.stageTitles.length - 1);
+    const late = ms < 180_000 ? 0.45 : ms < 420_000 ? 0.2 : 0;
+    ambience.set(g.paused ? 0 : 0.1 + progress * 0.3 + late + (stage?.comp.tension?.() || 0) * 0.45);
   }
 
   // ---------------------------------------------------------- renderers
@@ -197,6 +218,9 @@ export function GameScreen(app) {
   }
 
   function renderLog(g) {
+    const key = JSON.stringify([g.logs.length, g.logs.at(-1)?.at, g.inventory?.length, g.fragmentsFound]);
+    if (key === lastLogs) return;
+    lastLogs = key;
     const items = [...g.logs].reverse().map((l) => h('div', { class: 'log-item' }, h('time', {}, fmtTime(l.at)), l.text));
     const inv =
       role === 'explorer'
@@ -273,7 +297,64 @@ export function GameScreen(app) {
     }
   }
 
+  function renderDeal(g) {
+    if (role !== 'archivist') return;
+    if (g.deal !== 'offered') {
+      dealHost.replaceChildren();
+      return;
+    }
+    if (dealHost.firstChild) return;
+    const answer = async (accept) => {
+      if (accept && !(await ask('قبول صفقة الصدى؟ سيبطئ في هذا الممر، لكن لها ثمنًا لاحقًا… وشريكك لن يعرف إلا إن أخبرته.', 'أقبل'))) return;
+      await app.call('game:deal', { accept });
+    };
+    mount(
+      dealHost,
+      h(
+        'section',
+        { class: 'deal-card', role: 'alertdialog', 'aria-label': 'عرض من الصدى' },
+        h('div', { class: 'kicker' }, 'PRIVATE CHANNEL · قناة خاصة'),
+        h('h3', {}, 'صوت في سماعتك فقط'),
+        h('p', {}, '«شريكك لا يسمعني الآن. أنت فقط.»'),
+        h('p', {}, '«أعطني صوتك — فقط أن أتعلمه — وسأمشي ببطء في هذا الممر.»'),
+        h('p', {}, '«لن يعرف أحد. إلا إن أخبرته أنت.»'),
+        h('div', { class: 'deal-actions' }, h('button', { class: 'btn danger', type: 'button', onclick: () => answer(true) }, '🤝 أقبل'), h('button', { class: 'btn primary', type: 'button', onclick: () => answer(false) }, '🛡 أرفض')),
+      ),
+    );
+  }
+
+  function showInterlude(g) {
+    if (!g.interlude || interludeShown === g.stageId) return;
+    interludeShown = g.stageId;
+    const key = `dsms:interlude:${gameId}:${g.stageId}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch {
+      /* ignore */
+    }
+    const i = g.interlude;
+    const close = () => card.remove();
+    const card = h(
+      'div',
+      { class: 'interlude', role: 'dialog', 'aria-modal': 'true', onclick: close },
+      h(
+        'div',
+        { class: 'interlude-inner' },
+        h('div', { class: 'kicker' }, i.kicker),
+        h('h2', {}, i.title),
+        i.lines.map((l, n) => h('p', { style: { animationDelay: `${0.5 + n * 1.1}s` } }, l)),
+        h('div', { class: 'skip' }, 'اضغط في أي مكان للمتابعة'),
+      ),
+    );
+    document.body.append(card);
+    setTimeout(close, 6500 + i.lines.length * 900);
+  }
+
   // ---------------------------------------------------------- overlays
+  // Overlays are rebuilt only when their kind changes, so clicks are never
+  // lost to the frequent state updates of real-time stages.
+  let overlayKind = null;
   function renderOverlays(s) {
     const g = s.game;
     const introKey = `dsms:intro:${gameId}`;
@@ -284,6 +365,8 @@ export function GameScreen(app) {
       /* ignore */
     }
     if (!seen) {
+      if (overlayKind === 'intro') return;
+      overlayKind = 'intro';
       const i = g.intro;
       mount(
         overlayHost,
@@ -311,7 +394,11 @@ export function GameScreen(app) {
                     /* ignore */
                   }
                   app.sfx.unlock();
+                  ambience.start();
+                  overlayKind = null;
+                  overlayHost.replaceChildren();
                   renderOverlays(state);
+                  showInterlude(state.game);
                 },
               },
               'ادخل المحطة',
@@ -323,6 +410,9 @@ export function GameScreen(app) {
     }
     if (g.paused) {
       const mate = s.room.players.find((p) => p.id !== s.you.id);
+      const kind = `pause:${mate?.name ?? ''}`;
+      if (overlayKind === kind) return;
+      overlayKind = kind;
       mount(
         overlayHost,
         h(
@@ -341,6 +431,8 @@ export function GameScreen(app) {
       );
       return;
     }
+    if (overlayKind === null) return;
+    overlayKind = null;
     overlayHost.replaceChildren();
   }
 
@@ -352,6 +444,8 @@ export function GameScreen(app) {
     paintTimer();
     renderStage(g);
     renderDesk(g);
+    renderDeal(g);
+    if (sessionStorage.getItem(`dsms:intro:${gameId}`)) showInterlude(g);
     renderChat(g.chat);
     renderLog(g);
     const hk = JSON.stringify([g.hints, g.hintsLeft, g.paused, g.stageId, Math.round((g.nextHintInMs || 0) / 5000)]);
@@ -371,6 +465,8 @@ export function GameScreen(app) {
     clearInterval(timerLoop);
     clearInterval(hintCountdown);
     stage?.comp.destroy?.();
+    ambience.stop();
+    document.querySelector('.interlude')?.remove();
     document.body.className = '';
   }
 

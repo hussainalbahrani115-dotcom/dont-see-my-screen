@@ -114,6 +114,8 @@ export function attachRealtime(io, rooms, { rateLimit = 80 } = {}) {
     handle('chat:flag', ({ id }) => rooms.flag(current(), session.playerId, id));
     handle('game:hint', () => rooms.hint(current(), session.playerId));
     handle('game:rematch', () => rooms.rematch(current(), session.playerId));
+    handle('game:deal', ({ accept }) => rooms.deal(current(), session.playerId, accept));
+    handle('game:ping', () => rooms.ping(current(), session.playerId));
 
     socket.on('disconnect', unbind);
   });

@@ -14,9 +14,9 @@ const ROLE_INFO = {
 };
 
 const DIFF = {
-  easy: { label: 'هادئ', desc: '30 دقيقة · ألغاز أبسط · صدى نادر' },
-  normal: { label: 'متوتر', desc: '22 دقيقة · الصدى يتدخل في كل مرحلة' },
-  hard: { label: 'مرعب', desc: '16 دقيقة · ممرات أوسع · الصدى أكثر جرأة' },
+  easy: { label: 'هادئ', desc: '42 دقيقة · 6 مراحل · ألغاز أبسط وصدى نادر' },
+  normal: { label: 'متوتر', desc: '34 دقيقة · 6 مراحل · الصدى يتدخل في كل مرحلة' },
+  hard: { label: 'مرعب', desc: '26 دقيقة · 6 مراحل · صدى أسرع وأكثر جرأة' },
 };
 
 export function LobbyScreen(app) {

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { io as connect } from 'socket.io-client';
 import { createGameServer } from '../server/index.js';
 import { localProvider } from '../server/ai/local.js';
-import { solutionFor } from './helpers.js';
+import { solutionFor, stageId } from './helpers.js';
 
 let srv;
 let url;
@@ -126,7 +126,22 @@ test('full online round: secrecy, sync, chat, echo flag, release ending, rematch
 
   // Play the whole mission with the right moves.
   const sock = { explorer: b, archivist: a };
-  for (let guard = 0; game.status === 'playing' && guard < 10; guard++) {
+  for (let guard = 0; game.status === 'playing' && guard < 12; guard++) {
+    if (stageId(game) === 'pressure') {
+      // Real-time stage: fast-forward the boiler to the edge of completion
+      // and let the server clock finish it.
+      const st = game.stage;
+      Object.assign(st, { startAt: 0, lastTick: Date.now(), drift: 0, surge: 0, p: (st.lo + st.hi) / 2, progress: st.goal - 0.2 });
+      await a.waitFor((s) => s.game.stageId !== 'pressure', 4000);
+      continue;
+    }
+    if (stageId(game) === 'chase') {
+      const offered = await a.waitFor((s) => s.game.deal === 'offered');
+      assert.equal(offered.game.deal, 'offered');
+      assert.equal(b.state.game.deal, undefined, 'the explorer never sees the offer');
+      assert.equal((await b.emit('game:deal', { accept: true })).ok, false, 'only the archivist can answer');
+      assert.ok((await a.emit('game:deal', { accept: false })).ok);
+    }
     for (const step of solutionFor(game)) {
       const res = await sock[step.role].emit('game:action', { type: step.type, payload: step.payload });
       assert.ok(res.ok, `${step.type}: ${res.error}`);
@@ -136,6 +151,8 @@ test('full online round: secrecy, sync, chat, echo flag, release ending, rematch
   assert.equal(ended.game.ending.key, 'release');
   assert.equal(ended.game.result.fragments, 3);
   assert.ok(ended.game.result.fakes.some((f) => f.caught));
+  assert.ok(ended.game.result.badges.some((x) => x.title === 'لا للصفقة'));
+  assert.ok((await a.emit('game:ping')).ok === false, 'no pings after the round ends');
   await a.waitFor((s) => s.game.result.epilogue != null);
   const board = await (await fetch(`${url}/api/leaderboard`)).json();
   assert.ok(board.results.some((r) => r.ending === 'release'));
