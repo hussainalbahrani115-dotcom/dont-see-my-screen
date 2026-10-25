@@ -1,0 +1,15 @@
+# Render Blueprint: New → Blueprint → pick this repository.
+services:
+  - type: web
+    name: dont-see-my-screen
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      # Optional: enables Claude-generated content. Set it in the Render dashboard.
+      - key: ANTHROPIC_API_KEY
+        sync: false

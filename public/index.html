@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07090d">
+  <title>لا تشوف شاشتي</title>
+  <meta name="description" content="لعبة تعاون لشخصين: كل واحد يرى نصف الحقيقة.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2307090d'/%3E%3Cpath d='M10 32c6-10 14-15 22-15s16 5 22 15c-6 10-14 15-22 15S16 42 10 32z' fill='none' stroke='%23f5a524' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='7' fill='%23f5a524'/%3E%3Cpath d='M14 50L50 14' stroke='%2307090d' stroke-width='9'/%3E%3Cpath d='M14 50L50 14' stroke='%23ff5a52' stroke-width='4'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@400;600;700&family=Reem+Kufi:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="app" aria-live="polite"></div>
+  <div id="toasts" aria-live="assertive"></div>
+  <div id="fx-layer" aria-hidden="true"></div>
+  <noscript>هذه اللعبة تحتاج إلى تفعيل JavaScript.</noscript>
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>
